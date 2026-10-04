@@ -191,7 +191,7 @@ var KEY = 'tesClaim.v1';
 var DEF_SETTINGS = {
   vehicle: '', rate: 13.85, approvedKm: 4950, defFrom: '09:30', defTo: '18:00', defMode: 'Own Car', hqCity: 'VADODARA',
   myCities: ['VADODARA', 'PADRA', 'DABHOI', 'VAGHODIA', 'BODELI', 'CHHOTAUDAIPUR', 'HALOL', 'GODHRA', 'LUNAWADA', 'DAHOD', 'JHALOD', 'DEOGAD-BARIA', 'ANAND', 'NADIAD', 'RAJPIPLA', 'HAZIRA', 'SURAT'],
-  distributors: []
+  distributors: [], salesGroup: 'BARODA LPG SA', salesGroupId: '337'
 };
 var DB;
 function load() {
@@ -451,9 +451,18 @@ function dayHTML() {
     }).join('') + '</div></div>';
     if (d.type === 'field') {
       var ds = S().distributors, sel = d.dists || [];
-      h += '<div class="f"><span class="lbl">Distributors visited</span><div class="chips">' +
+      h += '<div class="f"><span class="lbl">Distributors / customers visited</span><div class="chips">' +
         sel.map(function (id) { var x = ds.find(function (z) { return z.id === id; }); return x ? '<button class="chip on" data-dist="' + id + '"' + dis + '>' + esc(x.name) + ' ✕</button>' : ''; }).join('') +
         '<button class="chip add" data-pick="dist"' + dis + '>+ Add</button></div></div>';
+      var tc = tiCustomer(d);
+      if (sel.length) {
+        h += '<div class="f calc" style="font-weight:500">TI customer: <b>' + (tc && tc.cust ? esc(tc.cust) : 'not set') + '</b>' +
+          (tc && !tc.cust ? '<br><span style="color:var(--bad)">Add the portal customer for ' + esc(tc.name) + ' in Settings › Distributors.</span>' : '') +
+          (sel.length > 1 && !locked ? '<br><button class="lnk" data-act="ticust" style="padding:4px 0">Change TI customer</button>' : '') +
+          '<br><span class="muted">Sales group: ' + esc(S().salesGroup) + '</span></div>';
+      } else if (d.place !== 'SA HQ') {
+        h += '<div class="warnbox">Add the distributor or customer visited. The portal needs a Customer on this TI row.</div>';
+      }
     }
     h += '<div class="f"><label for="remark">TI remark ' + (d.remarkEdited ? '' : '<span class="muted">(auto)</span>') + '</label>' +
       '<textarea class="in" id="remark" data-k="remark"' + dis + '>' + esc(d.remark) + '</textarea>' +
@@ -512,6 +521,11 @@ function autoRemark(d) {
   }
   return (d.purpose || 'Visit') + (d.city ? ' at ' + d.city : '');
 }
+function tiCustomer(d) {
+  var sel = d.dists || []; if (!sel.length) return null;
+  var id = sel.indexOf(d.tiCust) > -1 ? d.tiCust : sel[0];
+  return S().distributors.find(function (z) { return z.id === id; }) || null;
+}
 function refreshRemark(d) { if (!d.remarkEdited) d.remark = autoRemark(d); }
 function setType(t) {
   var d = curDay(true), s = S(), first = !d.type;
@@ -545,7 +559,7 @@ function summaryHTML() {
   inf.dates.forEach(function (dt) {
     var d = fn.days[dt]; if (!isTiDay(d)) return;
     var km = kmOf(d); tot.km += km; tot.fare += +d.fare || 0; tot.toll += +d.toll || 0; tot.other += +d.other || 0;
-    rows += '<tr><td class="nw">' + dmy(dt).slice(0, 5) + '</td><td>' + esc(d.place) + '<br><span class="muted">' + esc(d.purpose) + '</span></td><td>' + esc(d.remark) + '</td>' +
+    rows += '<tr><td class="nw">' + dmy(dt).slice(0, 5) + '</td><td>' + esc(d.place) + '<br><span class="muted">' + esc(d.purpose) + '</span></td><td>' + esc(d.remark) + (tiCustomer(d) && tiCustomer(d).cust ? '<br><span class="muted">' + esc(tiCustomer(d).cust) + '</span>' : '') + '</td>' +
       '<td class="nw">' + esc(d.from || '') + '–' + esc(d.to || '') + '</td><td>' + esc(d.mode || '') + '<br>' + esc(d.city || '') + '</td>' +
       '<td class="n">' + (km ? num(km) : '') + '</td><td class="n">' + (d.fare ? money(d.fare) : '') + '</td><td class="n">' + (d.toll ? money(d.toll) : '') + '</td><td class="n">' + (d.other ? money(d.other) : '') + '</td></tr>';
   });
@@ -584,9 +598,9 @@ function settingsHTML() {
   h += '<div class="sec"><h3>My cities</h3><div class="muted f">These show as quick picks. Others… searches all ' + num(PORTAL.cities.length) + ' portal cities.</div><div class="chips">' +
     s.myCities.map(function (c) { return '<button class="chip" data-delcity="' + esc(c) + '">' + esc(c) + ' ✕</button>'; }).join('') +
     '<button class="chip add" data-pick="addcity">+ Add city</button></div></div>';
-  h += '<div class="sec"><h3>Distributors</h3><div class="muted f">Name as you want it in the TI remark, and its town.</div>' +
+  h += '<div class="sec"><h3>Distributors</h3><div class="muted f">Short name for the TI remark, TES town, and the portal customer (for the TI Customer column). Sales group: ' + esc(s.salesGroup) + '.</div>' +
     (s.distributors.length ? '<div class="list f">' + s.distributors.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (x) {
-      return '<button data-editdist="' + x.id + '">' + esc(x.name) + '<small>' + esc(x.town || '') + '</small></button>';
+      return '<button data-editdist="' + x.id + '">' + esc(x.name) + '<small>' + esc(x.town || 'no town') + (x.custCode ? ' · ' + esc(x.custCode) : ' · <span style="color:var(--bad)">no portal customer</span>') + '</small></button>';
     }).join('') + '</div>' : '') +
     '<div class="row"><button class="chip add" data-act="newdist">+ Add distributor</button><button class="chip add" data-act="pastedist">Paste a list</button></div></div>';
   h += '<div class="sec"><h3>Backup</h3><div class="muted f">Keep a backup in OneDrive or Files. Safari can clear website data if the app isn\'t used for a while; adding it to the Home Screen helps prevent that.</div>' +
@@ -641,10 +655,12 @@ function distForm(x, isNew) {
   sheet(isNew ? 'Add distributor' : 'Edit distributor',
     '<div class="f"><label>Name (as in TI remark)</label><input class="in" id="dn" value="' + esc(x.name) + '" placeholder="e.g. Kevin HP Gas"></div>' +
     '<div class="f"><span class="lbl">Town</span><button class="in" id="dt" style="text-align:left">' + esc(x.town || 'Choose…') + '</button></div>' +
+    '<div class="f"><label>Portal customer name</label><input class="in" id="dc" value="' + esc(x.cust || '') + '" placeholder="e.g. KEVIN HP GAS AGENCY" autocapitalize="characters"></div>' +
+    '<div class="f"><label>Customer code</label><input class="in" id="dcc" value="' + esc(x.custCode || '') + '" inputmode="numeric" placeholder="e.g. 0041044762"></div>' +
     '<button class="btn" id="ds" style="width:100%">Save</button>' + (isNew ? '' : '<div style="height:8px"></div><button class="btn alt" id="dd" style="width:100%;color:var(--bad)">Delete</button>'),
     function () {
       $('dt').onclick = function () {
-        x.name = $('dn').value;
+        x.name = $('dn').value; x.cust = $('dc').value; x.custCode = $('dcc').value;
         pickList('Town', S().myCities.map(function (c) { return { v: c, t: c }; }).concat([{ v: '__o', t: 'Others…', sub: 'search all cities' }]), function (v) {
           function done(c) { x.town = c; distForm(x, isNew); }
           if (v === '__o') citySearch('Town', done); else done(v);
@@ -653,7 +669,8 @@ function distForm(x, isNew) {
       $('ds').onclick = function () {
         x.name = $('dn').value.trim(); if (!x.name) { toast('Enter a name'); return; }
         var L = S().distributors, i = L.findIndex(function (z) { return z.id === x.id; });
-        var obj = { id: x.id, name: x.name, town: x.town || '' };
+        var cc = $('dcc').value.replace(/\D/g, ''); if (cc) cc = ('0000000000' + cc).slice(-10);
+        var obj = { id: x.id, name: x.name, town: x.town || '', cust: $('dc').value.trim().toUpperCase(), custCode: cc };
         if (i > -1) L[i] = obj; else L.push(obj);
         save(); closeSheet(); afterDistSave(obj.id);
       };
@@ -689,19 +706,25 @@ function distPicker() {
   });
 }
 function pasteDist() {
-  sheet('Paste distributor list', '<div class="muted f">One per line: <b>Name, Town</b>. Town must match a portal city (e.g. GODHRA). Copy two columns from Excel and paste here.</div>' +
-    '<textarea class="in" id="pd" style="min-height:180px" placeholder="Kevin HP Gas, GODHRA&#10;Mahisagar Gas, LUNAWADA"></textarea><div style="height:10px"></div><button class="btn" id="pds" style="width:100%">Add all</button>', function () {
+  sheet('Paste distributor list', '<div class="muted f">Copy columns <b>A to C</b> from Distributor_List_for_TES.xlsx (Name, TES town, Portal customer) and paste here. Existing names are updated, new ones added.</div>' +
+    '<textarea class="in" id="pd" style="min-height:180px" placeholder="Kevin HP Gas&#9;GODHRA&#9;KEVIN HP GAS AGENCY (0041044762)"></textarea><div style="height:10px"></div><button class="btn" id="pds" style="width:100%">Add all</button>', function () {
     $('pds').onclick = function () {
-      var lines = $('pd').value.split(/\n/), add = 0, bad = [];
+      var lines = $('pd').value.split(/\n/), add = 0, upd = 0, bad = [], nocust = 0, newTowns = 0;
       lines.forEach(function (l) {
-        var p = l.split(/\t|,/).map(function (x) { return x.trim(); }); if (!p[0]) return;
+        var p = l.indexOf('\t') > -1 ? l.split('\t') : l.split(',');
+        p = p.map(function (x) { return x.trim(); }); if (!p[0]) return;
         var town = (p[1] || '').toUpperCase();
         if (town && !CITY_CODE[town]) { bad.push(town); town = ''; }
-        if (S().distributors.some(function (z) { return z.name.toLowerCase() === p[0].toLowerCase(); })) return;
-        S().distributors.push({ id: 'd' + Date.now() + add, name: p[0], town: town }); add++;
+        var raw = p.slice(2).join(', ').trim(), m = raw.match(/^(.*)\((\d{6,10})\)\s*$/);
+        var cust = m ? m[1].trim().toUpperCase() : '', code = m ? ('0000000000' + m[2]).slice(-10) : '';
+        if (!code) nocust++;
+        if (town && S().myCities.indexOf(town) < 0) { S().myCities.push(town); newTowns++; }
+        var ex = S().distributors.find(function (z) { return z.name.toLowerCase() === p[0].toLowerCase(); });
+        if (ex) { if (town) ex.town = town; if (code) { ex.cust = cust; ex.custCode = code; } upd++; }
+        else { S().distributors.push({ id: 'd' + Date.now() + '_' + add, name: p[0], town: town, cust: cust, custCode: code }); add++; }
       });
       save(); closeSheet(); render();
-      toast(add + ' added' + (bad.length ? '. Towns not found: ' + bad.slice(0, 3).join(', ') : ''));
+      toast(add + ' added, ' + upd + ' updated' + (newTowns ? ', ' + newTowns + ' new towns in My cities' : '') + (bad.length ? '. Towns not found: ' + bad.slice(0, 3).join(', ') : '') + (nocust ? '. ' + nocust + ' without portal customer' : ''));
     };
   });
 }
@@ -764,16 +787,19 @@ function wbBlob(sheets) {
 function nz(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
 function exportTI() {
   var fn = getFn(view.id, true), inf = fnInfo(fn.id);
-  var rows = [['Date', 'Place of Visit', 'Purpose of Visit', 'TI Remark', 'Place ID', 'Purpose ID']], n = 0;
+  var rows = [['Date', 'Place of Visit', 'Purpose of Visit', 'Sales Group', 'Customer', 'TI Remark', 'Place ID', 'Purpose ID', 'Sales Group ID', 'Customer ID']], n = 0, warn = [];
   inf.dates.forEach(function (dt) {
     var d = fn.days[dt]; if (!isTiDay(d)) return;
-    rows.push([dmy(dt), d.place, d.purpose || '', d.remark || '', placeId(d.place), purposeId(d.place, d.purpose)]); n++;
+    var tc = tiCustomer(d), hasC = !!(tc && tc.custCode);
+    rows.push([dmy(dt), d.place, d.purpose || '', hasC ? S().salesGroup : '', hasC ? tc.cust : '', d.remark || '',
+      placeId(d.place), purposeId(d.place, d.purpose), hasC ? S().salesGroupId : '', hasC ? tc.custCode : '']); n++;
+    if (!d.purpose || !purposeId(d.place, d.purpose)) warn.push(dmy(dt).slice(0, 5) + ': purpose missing');
+    if (d.place !== 'SA HQ' && !hasC) warn.push(dmy(dt).slice(0, 5) + ': customer missing');
   });
   if (!n) { toast('No TI days entered yet'); return; }
-  var bad = rows.slice(1).filter(function (r) { return !r[2] || !r[5]; });
-  if (bad.length && !confirm(bad.length + ' day(s) have no valid purpose: ' + bad.map(function (r) { return r[0].slice(0, 5); }).join(', ') + '. Download anyway?')) return;
+  if (warn.length && !confirm('Check before upload:\n' + warn.join('\n') + '\n\nDownload anyway?')) return;
   var name = 'TI_' + inf.y + '-' + pad(inf.m) + '_F' + inf.h + '.xlsx';
-  shareFile(wbBlob([{ name: 'TI', rows: rows, widths: [12, 26, 26, 44, 9, 11] }]), name).then(function () {
+  shareFile(wbBlob([{ name: 'TI', rows: rows, widths: [12, 26, 22, 16, 36, 44, 9, 10, 13, 13] }]), name).then(function () {
     if (fn.status < 1 && !fn.sentBack) { fn.status = 1; save(); render(); }
   });
 }
@@ -931,6 +957,10 @@ document.addEventListener('click', function (e) {
     var inf2 = fnInfo(view.id), p = getFn(view.id).days[inf2.dates[inf2.dates.indexOf(view.date) - 1]];
     var c = JSON.parse(JSON.stringify(p)); c.open = p.mode === 'Own Car' ? p.close : ''; c.close = ''; c.personal = ''; c.toll = ''; c.other = ''; c.fare = ''; c.ticket = ''; c.expRemark = '';
     getFn(view.id).days[view.date] = c; save(); render(); toast('Copied. Update the km.');
+  }
+  else if (a === 'ticust') {
+    var d7 = curDay(true), opts = (d7.dists || []).map(function (id) { var x = S().distributors.find(function (z) { return z.id === id; }); return x ? { v: id, t: x.name, sub: x.cust || 'no portal customer' } : null; }).filter(Boolean);
+    pickList('Customer for the TI row', opts, function (v) { d7.tiCust = v; save(); render(); });
   }
   else if (a === 'addhotel') hotelForm(null, view.date);
   else if (a === 'receipts') shareReceipts();
