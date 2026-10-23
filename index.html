@@ -403,6 +403,7 @@ function fnHTML() {
     return '<button class="day" data-hotel="' + x.id + '"><div class="dt"><b>🏨</b></div><div class="info"><div>' + esc(x.hotel || 'Hotel') + ', ' + esc(x.city || '') + '</div>' +
       '<div class="m">' + dmy(x.from) + ' to ' + (x.to ? dmy(x.to) : '?') + ' · ₹' + money(hotelTotal(x)) + '</div></div></button>';
   }).join('') + '</div>';
+  h += '<div style="height:10px"></div><label class="btn alt" style="display:block;text-align:center">Import TI from portal (Excel)<input type="file" accept=".xlsx,.xls" id="tiImportIn" hidden></label>';
   h += '<div style="height:10px"></div><button class="btn alt" data-act="receipts" style="width:100%">Share receipt photos</button>';
   h += '<div style="height:10px"></div><button class="lnk" data-act="delfn" style="color:var(--bad)">Delete this fortnight</button>';
   h += '</div>';
@@ -836,6 +837,104 @@ function exportTES(force) {
   });
 }
 
+/* ---------- Import TI (from TES Filler export or app TI Excel) ---------- */
+function titleCase(s) { return String(s || '').toLowerCase().replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }).replace(/\bHp\b/g, 'HP').replace(/\bLpg\b/g, 'LPG'); }
+function normDate(v) {
+  v = String(v || '').trim(); var m;
+  if ((m = v.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/))) return m[3] + '-' + pad(+m[2]) + '-' + pad(+m[1]);
+  if ((m = v.match(/^(\d{4})-(\d{2})-(\d{2})/))) return m[1] + '-' + m[2] + '-' + m[3];
+  if (/^\d{5}$/.test(v)) { var d = new Date(Date.UTC(1899, 11, 30) + (+v) * 864e5); return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()); }
+  return '';
+}
+function importTI(file) {
+  var rd = new FileReader();
+  rd.onload = function () {
+    var wb; try { wb = XLSX.read(new Uint8Array(rd.result), { type: 'array' }); } catch (e) { toast('Could not read this file'); return; }
+    var ws = wb.Sheets.TI || wb.Sheets[wb.SheetNames[0]];
+    var A = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    if (!A.length) { toast('The file is empty'); return; }
+    var hd = A[0].map(function (x) { return String(x).trim().toLowerCase(); });
+    function ci(n) { return hd.indexOf(n); }
+    var c = { date: ci('date'), place: ci('place of visit'), purpose: ci('purpose of visit'), cust: ci('customer'), remark: ci('ti remark'), custId: ci('customer id') };
+    if (c.date < 0 || c.place < 0) { toast('Not a TI Excel (needs Date and Place of Visit columns)'); return; }
+    var items = [];
+    A.slice(1).forEach(function (r) {
+      var dt = normDate(r[c.date]); if (!dt || !r[c.place]) return;
+      var code = c.custId > -1 ? String(r[c.custId] || '').replace(/\D/g, '') : '';
+      items.push({ date: dt, place: String(r[c.place]).trim(), purpose: c.purpose > -1 ? String(r[c.purpose]).trim() : '', remark: c.remark > -1 ? String(r[c.remark]).trim() : '',
+        cust: c.cust > -1 ? String(r[c.cust]).trim().toUpperCase() : '', custCode: code ? ('0000000000' + code).slice(-10) : '' });
+    });
+    if (!items.length) { toast('No TI rows found in the file'); return; }
+    var status = '';
+    if (wb.Sheets.Info) XLSX.utils.sheet_to_json(wb.Sheets.Info, { header: 1, raw: false, defval: '' }).forEach(function (r) { if (String(r[0]).toLowerCase() === 'status') status = String(r[1] || ''); });
+    var fids = {}; items.forEach(function (x) { fids[fnOf(x.date)] = 1; });
+    var ids = Object.keys(fids);
+    if (ids.length > 1) { toast('The file covers more than one fortnight'); return; }
+    if (ids[0] !== view.id) {
+      if (!confirm('This file is for ' + fnInfo(ids[0]).label + ' (' + fnInfo(ids[0]).range + '). Open that fortnight and import there?')) return;
+      getFn(ids[0], true); go({ name: 'fn', id: ids[0] });
+    }
+    importPreview(items, status);
+  };
+  rd.readAsArrayBuffer(file);
+}
+function tiOf(d) { var tc = d ? tiCustomer(d) : null; return d && isTiDay(d) ? { place: d.place, purpose: d.purpose || '', remark: d.remark || '', custCode: tc && tc.custCode || '' } : null; }
+function importPreview(items, status) {
+  var fn = getFn(view.id, true), inf = fnInfo(fn.id);
+  var neu = [], same = [], diff = [], inFile = {};
+  items.forEach(function (x) {
+    inFile[x.date] = 1;
+    var a = tiOf(fn.days[x.date]);
+    if (!a) neu.push(x);
+    else if (a.place === x.place && a.purpose === x.purpose && a.remark === x.remark && a.custCode === x.custCode) same.push(x);
+    else diff.push({ x: x, a: a });
+  });
+  var extra = inf.dates.filter(function (dt) { return isTiDay(fn.days[dt]) && !inFile[dt]; });
+  var st = /approv/i.test(status) ? 3 : /submit|pending/i.test(status) ? 2 : 0;
+  var h = '<div class="card"><b>' + items.length + '</b> TI rows in the file' + (status ? ' · portal status: <b>' + esc(status) + '</b>' : '') +
+    '<div class="muted">' + neu.length + ' new · ' + same.length + ' already the same · ' + diff.length + ' different</div></div>';
+  if (diff.length) {
+    h += '<h2>Different in the app</h2><div class="muted f">Ticked rows take the portal version. Expense details already entered are kept.</div>';
+    diff.forEach(function (z, i) {
+      h += '<label class="card" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-di="' + i + '" checked style="width:22px;height:22px;margin-top:2px;flex:none">' +
+        '<div><b>' + dmy(z.x.date).slice(0, 5) + '</b><div class="muted">App: ' + esc(z.a.place) + ' · ' + esc(z.a.purpose) + ' · ' + esc(z.a.remark) + '</div>' +
+        '<div>Portal: ' + esc(z.x.place) + ' · ' + esc(z.x.purpose) + ' · ' + esc(z.x.remark) + (z.x.cust ? ' · ' + esc(z.x.cust) : '') + '</div></div></label>';
+    });
+  }
+  if (extra.length) h += '<div class="warnbox">In the app but not on the portal TI: ' + extra.map(function (d) { return dmy(d).slice(0, 5); }).join(', ') + '. These are left as they are; mark them as leave if you did not travel.</div>';
+  if (st >= 2 && fn.status < st) h += '<label class="card" style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="impSt" checked style="width:22px;height:22px;flex:none">Set status to: <b>' + STATUS[st] + '</b></label>';
+  var nTake = neu.length + diff.length;
+  h += nTake ? '<button class="btn" id="impGo" style="width:100%">Import ' + nTake + ' row(s)</button>' : '<div class="okbox">The app already matches the portal TI.</div>' + (st >= 2 && fn.status < st ? '<button class="btn" id="impGo" style="width:100%">Update status only</button>' : '');
+  sheet('Import TI', h, function (sc) {
+    var go_ = $('impGo'); if (!go_) return;
+    go_.onclick = function () {
+      var take = neu.slice(), added = 0;
+      sc.querySelectorAll('[data-di]').forEach(function (cb) { if (cb.checked) take.push(diff[+cb.dataset.di].x); });
+      take.forEach(function (x) {
+        var d = fn.days[x.date] || {}; var wasEmpty = !d.type || d.type === 'leave';
+        d.type = x.place === 'SA HQ' ? 'hq' : 'field';
+        d.place = x.place; d.purpose = x.purpose; d.remark = x.remark; d.remarkEdited = true;
+        if (x.custCode) {
+          var L = S().distributors, ds = L.find(function (z) { return z.custCode === x.custCode; });
+          if (!ds) { ds = { id: 'd' + Date.now() + '_' + added, name: titleCase(x.cust || x.custCode), town: '', cust: x.cust, custCode: x.custCode }; L.push(ds); added++; }
+          d.dists = d.dists || []; if (d.dists.indexOf(ds.id) < 0) d.dists.unshift(ds.id);
+          d.tiCust = ds.id;
+          if (!d.city && ds.town) { d.city = ds.town; d.cityAuto = true; }
+        } else if (d.type === 'hq') { d.dists = []; d.tiCust = ''; }
+        if (wasEmpty || !d.from) {
+          var s = S(); d.from = d.from || s.defFrom; d.to = d.to || s.defTo; d.mode = d.mode || s.defMode; d.canteen = d.canteen || 'No';
+          if (d.type === 'hq' && !d.city) d.city = s.hqCity;
+        }
+        fn.days[x.date] = d;
+      });
+      inf.dates.forEach(function (dt) { var d = fn.days[dt]; if (d && d.mode === 'Own Car' && (d.open === undefined || d.open === '')) { var pc = prevClosing(dt); if (pc !== null) d.open = pc; } });
+      var stc = $('impSt'); if (stc && stc.checked) { fn.status = st; fn.sentBack = false; }
+      save(); closeSheet(); render();
+      toast(take.length + ' day(s) imported' + (added ? ', ' + added + ' new customer(s) added to Distributors' : ''));
+    };
+  });
+}
+
 /* ---------- receipt photos (IndexedDB) ---------- */
 var idb;
 function photoDB() {
@@ -894,6 +993,7 @@ function bind() {
     updateCalc(); showThumbs();
     var pi = $('photoIn'); if (pi) pi.onchange = function () { if (pi.files[0]) addPhoto(pi.files[0]); pi.value = ''; };
   }
+  var tii = $('tiImportIn'); if (tii) tii.onchange = function () { if (tii.files[0]) importTI(tii.files[0]); tii.value = ''; };
   var ri = $('restoreIn');
   if (ri) ri.onchange = function () {
     var f = ri.files[0]; if (!f) return; var rd = new FileReader();
